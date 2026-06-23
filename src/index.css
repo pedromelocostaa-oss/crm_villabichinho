@@ -1,0 +1,47 @@
+@import "tailwindcss";
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overscroll-behavior: none;
+}
+
+#root {
+  width: 100%;
+  min-height: 100vh;
+}
+
+/* Safe area for iPhone home bar */
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Smooth scroll on touch */
+.scroll-touch {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Prevent text selection on tap */
+button {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Scrollbar styling for pipeline */
+.pipeline-scroll::-webkit-scrollbar {
+  height: 4px;
+}
+.pipeline-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.pipeline-scroll::-webkit-scrollbar-thumb {
+  background: #d1fae5;
+  border-radius: 2px;
+}
