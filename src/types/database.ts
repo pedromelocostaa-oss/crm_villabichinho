@@ -307,6 +307,59 @@ export type TicketMedioConsumo = {
   ticket_por_reserva_total: number | null;
 };
 
+// ─────────────────────────────────────────────────────────────
+// CRM de leads (migrado do localStorage)
+// ─────────────────────────────────────────────────────────────
+
+export type LeadEtapa =
+  | 'novo_contato'
+  | 'orcamento_enviado'
+  | 'negociacao'
+  | 'pendente_followup'
+  | 'confirmado'
+  | 'declinado';
+
+export type LeadRow = {
+  id: string;
+  /** Id do lead no localStorage. UNIQUE: e o que torna a importacao idempotente. */
+  legacy_id: string | null;
+  nome: string;
+  telefone: string | null;
+  email: string | null;
+  etapa: LeadEtapa;
+  check_in: string | null;
+  check_out: string | null;
+  hospedes: number | null;
+  acomodacao: string | null;
+  ocasiao: string | null;
+  /** numeric(12,2): o postgrest devolve string. */
+  orcamento: number | string | null;
+  procurando: string | null;
+  servicos: string[];
+  atendente: string | null;
+  ultima_mensagem: string | null;
+  ultima_interacao: string | null;
+  observacoes: string | null;
+  motivo_recusa: string | null;
+  motivo_recusa_outro: string | null;
+  data_recusa: string | null;
+  observacoes_recusa: string | null;
+  followup_data: string | null;
+  followup_tipo: string | null;
+  followup_feito: boolean;
+  arquivado: boolean;
+  criado_em: string;
+};
+
+export type LeadHistoryRow = {
+  id: string;
+  lead_id: string;
+  data: string;
+  acao: string;
+  atendente: string | null;
+  nota: string | null;
+};
+
 /**
  * Insercao: tudo opcional (o banco tem default para quase tudo), menos as
  * colunas realmente obrigatorias, e sem as colunas geradas, que o Postgres
@@ -387,8 +440,8 @@ export type Database = {
           'business_unit_id' | 'data_competencia' | 'categoria' | 'descricao' | 'valor'
         >
       >;
-      leads: Tabela<Record<string, unknown>, Record<string, unknown>>;
-      lead_history: Tabela<Record<string, unknown>, Record<string, unknown>>;
+      leads: Tabela<LeadRow, Insercao<LeadRow, 'nome'>>;
+      lead_history: Tabela<LeadHistoryRow, Insercao<LeadHistoryRow, 'lead_id' | 'acao'>>;
     };
     Views: {
       v_faturamento_item: Visao<FaturamentoItem>;

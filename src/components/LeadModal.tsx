@@ -2,7 +2,7 @@ import { useState } from 'react';
 import {
   X, Phone, Mail, Calendar, Users, MapPin, DollarSign,
   Clock, MessageSquare, CheckCircle2, AlertTriangle, Edit3,
-  ChevronRight, Trash2, Copy, Check, ChevronDown, ChevronUp,
+  ChevronRight, Archive, Copy, Check, ChevronDown, ChevronUp,
 } from 'lucide-react';
 import type { Lead, LeadStage, FollowupType, RecusaMotivo } from '../types/lead';
 import {
@@ -331,8 +331,8 @@ export function LeadModal({ lead, onClose, onUpdate, onDelete, onChangeStage, on
                   <button onClick={() => setEditing(true)} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors" title="Editar">
                     <Edit3 size={16} />
                   </button>
-                  <button onClick={() => { if (confirm(`Excluir o lead "${lead.name}"?`)) { onDelete(lead.id); onClose(); } }} className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors" title="Excluir">
-                    <Trash2 size={16} />
+                  <button onClick={() => { if (confirm(`Arquivar o lead "${lead.name}"? Ele sai da listagem, mas o histórico fica no banco.`)) { onDelete(lead.id); onClose(); } }} className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors" title="Arquivar">
+                    <Archive size={16} />
                   </button>
                 </div>
                 <div className="grid grid-cols-2 gap-2">

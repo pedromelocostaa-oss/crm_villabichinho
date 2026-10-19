@@ -1,12 +1,17 @@
 import { useState } from 'react';
-import { LayoutDashboard, List, BarChart2, Plus, Zap, Package, PieChart } from 'lucide-react';
-import type { Lead } from './types/lead';
+import type { Session } from '@supabase/supabase-js';
+import {
+  LayoutDashboard, List, BarChart2, Plus, Zap, Package, PieChart, Loader2,
+} from 'lucide-react';
+import type { Lead, LeadStage } from './types/lead';
 import { useLeads } from './hooks/useLeads';
 import { useAuth } from './hooks/useAuth';
 import { Dashboard } from './components/Dashboard';
 import { LeadList } from './components/LeadList';
 import { LeadModal } from './components/LeadModal';
 import { NewLeadModal } from './components/NewLeadModal';
+import { ImportarLeads } from './components/ImportarLeads';
+import { ConfirmarReservaModal } from './components/ConfirmarReservaModal';
 import { Reports } from './components/Reports';
 import { Login } from './components/Login';
 import { LancamentoRapido } from './components/LancamentoRapido';
@@ -15,7 +20,7 @@ import { Financeiro } from './components/Financeiro';
 
 type Page = 'dashboard' | 'leads' | 'reports' | 'caixa' | 'produtos' | 'financeiro';
 
-/** Paginas do modulo financeiro: a RLS do Supabase exige sessao. */
+/** Paginas do modulo financeiro: nao levam o botao de novo lead. */
 const PAGINAS_FINANCEIRAS: Page[] = ['caixa', 'produtos', 'financeiro'];
 
 const NAV_ITEMS: { key: Page; label: string; icon: React.ElementType }[] = [
@@ -27,13 +32,64 @@ const NAV_ITEMS: { key: Page; label: string; icon: React.ElementType }[] = [
   { key: 'reports', label: 'Relatórios', icon: BarChart2 },
 ];
 
+/**
+ * O CRM saiu do localStorage: leads e lead_history tem RLS para authenticated,
+ * entao o app inteiro — nao so o financeiro — passa pelo login.
+ */
 export default function App() {
+  const { session, carregando, sair } = useAuth();
+
+  if (carregando) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <Loader2 size={24} className="animate-spin text-emerald-600" />
+      </div>
+    );
+  }
+
+  if (!session) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+        <div className="w-full max-w-sm">
+          <div className="flex items-center gap-3 mb-6 justify-center">
+            <div className="w-9 h-9 bg-emerald-600 rounded-lg flex items-center justify-center">
+              <span className="text-white font-bold text-xs">VB</span>
+            </div>
+            <div>
+              <p className="font-semibold text-gray-900 text-sm leading-tight">Villa Bichinho</p>
+              <p className="text-xs text-gray-400 leading-tight">CRM e Financeiro</p>
+            </div>
+          </div>
+          <Login />
+        </div>
+      </div>
+    );
+  }
+
+  return <AppAutenticado session={session} onSair={() => void sair()} />;
+}
+
+function AppAutenticado({ session, onSair }: { session: Session; onSair: () => void }) {
   const [page, setPage] = useState<Page>('dashboard');
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [showNewLead, setShowNewLead] = useState(false);
+  const [leadParaReserva, setLeadParaReserva] = useState<Lead | null>(null);
 
-  const { leads, createLead, updateLead, changeStage, deleteLead, markFollowupDone } = useLeads();
-  const { session, sair } = useAuth();
+  const {
+    leads, carregando, erro, importar,
+    createLead, updateLead, changeStage, deleteLead, markFollowupDone,
+  } = useLeads();
+
+  // Confirmar o lead e o gancho natural para a reserva nascer com origem e lead_id.
+  const handleChangeStage = (id: string, stage: LeadStage, attendant: string, note?: string) => {
+    void (async () => {
+      await changeStage(id, stage, attendant, note);
+      if (stage === 'confirmado') {
+        const lead = leads.find((l) => l.id === id);
+        if (lead) setLeadParaReserva({ ...lead, stage });
+      }
+    })();
+  };
 
   const urgentCount = leads.filter(
     (l) =>
@@ -104,37 +160,44 @@ export default function App() {
 
       {/* ── Main content ───────────────────────────────────── */}
       <main className="max-w-6xl mx-auto px-3 sm:px-4 py-4 sm:py-6 pb-24 sm:pb-6">
-        {page === 'dashboard' && (
-          <Dashboard
-            leads={leads}
-            onNewLead={() => setShowNewLead(true)}
-            onSelectLead={setSelectedLead}
-          />
-        )}
-        {page === 'leads' && (
-          <LeadList
-            leads={leads}
-            onSelectLead={setSelectedLead}
-          />
-        )}
-        {page === 'reports' && <Reports leads={leads} />}
+        <div className="flex items-center justify-between mb-4 text-xs text-gray-400">
+          <span className="truncate">{session.user.email}</span>
+          <button onClick={onSair} className="hover:text-gray-700 shrink-0">
+            Sair
+          </button>
+        </div>
 
-        {PAGINAS_FINANCEIRAS.includes(page) &&
-          (session ? (
-            <>
-              <div className="flex items-center justify-between mb-4 text-xs text-gray-400">
-                <span className="truncate">{session.user.email}</span>
-                <button onClick={sair} className="hover:text-gray-700 shrink-0">
-                  Sair
-                </button>
-              </div>
-              {page === 'caixa' && <LancamentoRapido />}
-              {page === 'financeiro' && <Financeiro />}
-              {page === 'produtos' && <CatalogoProdutos />}
-            </>
-          ) : (
-            <Login />
-          ))}
+        {erro && !PAGINAS_FINANCEIRAS.includes(page) && (
+          <div className="mb-4 bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg px-3 py-2">
+            {erro}
+          </div>
+        )}
+
+        {/* Fica fora do bloco de carregamento: a recarga depois da importacao
+            nao pode desmontar o aviso, senao o resultado dela desaparece. */}
+        {(page === 'dashboard' || page === 'leads') && <ImportarLeads onImportar={importar} />}
+
+        {carregando && !PAGINAS_FINANCEIRAS.includes(page) ? (
+          <div className="py-16 flex justify-center">
+            <Loader2 size={22} className="animate-spin text-emerald-600" />
+          </div>
+        ) : (
+          <>
+            {page === 'dashboard' && (
+              <Dashboard
+                leads={leads}
+                onNewLead={() => setShowNewLead(true)}
+                onSelectLead={setSelectedLead}
+              />
+            )}
+            {page === 'leads' && <LeadList leads={leads} onSelectLead={setSelectedLead} />}
+            {page === 'reports' && <Reports leads={leads} />}
+          </>
+        )}
+
+        {page === 'caixa' && <LancamentoRapido />}
+        {page === 'financeiro' && <Financeiro />}
+        {page === 'produtos' && <CatalogoProdutos />}
       </main>
 
       {/* ── Mobile FAB ─────────────────────────────────────── */}
@@ -180,7 +243,7 @@ export default function App() {
       {showNewLead && (
         <NewLeadModal
           onClose={() => setShowNewLead(false)}
-          onCreate={(data) => createLead(data)}
+          onCreate={(data) => void createLead(data)}
         />
       )}
 
@@ -188,10 +251,18 @@ export default function App() {
         <LeadModal
           lead={leads.find((l) => l.id === selectedLead.id) || selectedLead}
           onClose={() => setSelectedLead(null)}
-          onUpdate={updateLead}
-          onDelete={(id) => { deleteLead(id); setSelectedLead(null); }}
-          onChangeStage={changeStage}
-          onMarkFollowupDone={markFollowupDone}
+          onUpdate={(id, changes, note, attendant) => void updateLead(id, changes, note, attendant)}
+          onDelete={(id) => { void deleteLead(id); setSelectedLead(null); }}
+          onChangeStage={handleChangeStage}
+          onMarkFollowupDone={(id, attendant) => void markFollowupDone(id, attendant)}
+        />
+      )}
+
+      {leadParaReserva && (
+        <ConfirmarReservaModal
+          lead={leadParaReserva}
+          onClose={() => setLeadParaReserva(null)}
+          onCriada={(resumo) => void updateLead(leadParaReserva.id, {}, resumo)}
         />
       )}
     </div>
