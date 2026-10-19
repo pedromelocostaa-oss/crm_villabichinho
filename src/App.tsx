@@ -1,18 +1,29 @@
 import { useState } from 'react';
-import { LayoutDashboard, List, BarChart2, Plus } from 'lucide-react';
+import { LayoutDashboard, List, BarChart2, Plus, Zap, Package, PieChart } from 'lucide-react';
 import type { Lead } from './types/lead';
 import { useLeads } from './hooks/useLeads';
+import { useAuth } from './hooks/useAuth';
 import { Dashboard } from './components/Dashboard';
 import { LeadList } from './components/LeadList';
 import { LeadModal } from './components/LeadModal';
 import { NewLeadModal } from './components/NewLeadModal';
 import { Reports } from './components/Reports';
+import { Login } from './components/Login';
+import { LancamentoRapido } from './components/LancamentoRapido';
+import { CatalogoProdutos } from './components/CatalogoProdutos';
+import { Financeiro } from './components/Financeiro';
 
-type Page = 'dashboard' | 'leads' | 'reports';
+type Page = 'dashboard' | 'leads' | 'reports' | 'caixa' | 'produtos' | 'financeiro';
+
+/** Paginas do modulo financeiro: a RLS do Supabase exige sessao. */
+const PAGINAS_FINANCEIRAS: Page[] = ['caixa', 'produtos', 'financeiro'];
 
 const NAV_ITEMS: { key: Page; label: string; icon: React.ElementType }[] = [
   { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { key: 'leads', label: 'Leads', icon: List },
+  { key: 'caixa', label: 'Caixa', icon: Zap },
+  { key: 'financeiro', label: 'Financeiro', icon: PieChart },
+  { key: 'produtos', label: 'Produtos', icon: Package },
   { key: 'reports', label: 'Relatórios', icon: BarChart2 },
 ];
 
@@ -22,6 +33,7 @@ export default function App() {
   const [showNewLead, setShowNewLead] = useState(false);
 
   const { leads, createLead, updateLead, changeStage, deleteLead, markFollowupDone } = useLeads();
+  const { session, sair } = useAuth();
 
   const urgentCount = leads.filter(
     (l) =>
@@ -106,16 +118,35 @@ export default function App() {
           />
         )}
         {page === 'reports' && <Reports leads={leads} />}
+
+        {PAGINAS_FINANCEIRAS.includes(page) &&
+          (session ? (
+            <>
+              <div className="flex items-center justify-between mb-4 text-xs text-gray-400">
+                <span className="truncate">{session.user.email}</span>
+                <button onClick={sair} className="hover:text-gray-700 shrink-0">
+                  Sair
+                </button>
+              </div>
+              {page === 'caixa' && <LancamentoRapido />}
+              {page === 'financeiro' && <Financeiro />}
+              {page === 'produtos' && <CatalogoProdutos />}
+            </>
+          ) : (
+            <Login />
+          ))}
       </main>
 
       {/* ── Mobile FAB ─────────────────────────────────────── */}
-      <button
-        onClick={() => setShowNewLead(true)}
-        className="sm:hidden fixed bottom-20 right-4 w-14 h-14 bg-emerald-600 hover:bg-emerald-700 text-white rounded-full shadow-lg flex items-center justify-center z-30 active:scale-95 transition-transform"
-        aria-label="Novo Lead"
-      >
-        <Plus size={26} />
-      </button>
+      {!PAGINAS_FINANCEIRAS.includes(page) && (
+        <button
+          onClick={() => setShowNewLead(true)}
+          className="sm:hidden fixed bottom-20 right-4 w-14 h-14 bg-emerald-600 hover:bg-emerald-700 text-white rounded-full shadow-lg flex items-center justify-center z-30 active:scale-95 transition-transform"
+          aria-label="Novo Lead"
+        >
+          <Plus size={26} />
+        </button>
+      )}
 
       {/* ── Mobile bottom nav ──────────────────────────────── */}
       <nav className="sm:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 z-40 flex safe-bottom">
