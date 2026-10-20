@@ -823,6 +823,169 @@ export async function hospedesNaCasa(data: string = hojeISO()): Promise<HospedeN
     .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
 }
 
+export type ContaAberta = {
+  folio_id: string;
+  reserva_id: string | null;
+  hospede_id: string | null;
+  hospede: string;
+  chale: string | null;
+  origem: Origem | null;
+  check_in: string | null;
+  check_out: string | null;
+  total: number;
+  pago: number;
+  saldo: number;
+};
+
+/** Contas em aberto, com o que já foi lançado e o que falta receber. */
+export async function contasAbertas(): Promise<ContaAberta[]> {
+  const { data: folios, error } = await supabase
+    .from('folios')
+    .select('id, reserva_id, hospede_id, chale_id, aberta_em')
+    .eq('status', 'aberta')
+    .order('aberta_em', { ascending: false });
+  if (error) throw new ErroFinanceiro('Falha ao listar contas abertas', error.message);
+
+  const linhas = folios ?? [];
+  if (linhas.length === 0) return [];
+
+  const idsReserva = linhas.map((f) => f.reserva_id).filter((id): id is string => !!id);
+  const idsHospede = linhas.map((f) => f.hospede_id).filter((id): id is string => !!id);
+
+  const [reservas, hospedes, saldos] = await Promise.all([
+    idsReserva.length
+      ? supabase.from('reservas').select('id, origem, check_in, check_out, chale_id').in('id', idsReserva)
+      : Promise.resolve({ data: [] as never[] }),
+    idsHospede.length
+      ? supabase.from('hospedes').select('id, nome').in('id', idsHospede)
+      : Promise.resolve({ data: [] as never[] }),
+    supabase.from('v_saldo_folio').select('*').in('folio_id', linhas.map((f) => f.id)),
+  ]);
+
+  const porReserva = new Map((reservas.data ?? []).map((r) => [r.id, r]));
+  const nomeHospede = new Map((hospedes.data ?? []).map((h) => [h.id, h.nome]));
+  const porFolio = new Map((saldos.data ?? []).map((s) => [s.folio_id, s]));
+
+  const idsChale = [
+    ...new Set(
+      linhas
+        .map((f) => f.chale_id ?? porReserva.get(f.reserva_id ?? '')?.chale_id)
+        .filter((id): id is string => !!id)
+    ),
+  ];
+  const chales = idsChale.length
+    ? await supabase.from('chales').select('id, nome').in('id', idsChale)
+    : { data: [] as never[] };
+  const nomeChale = new Map((chales.data ?? []).map((c) => [c.id, c.nome]));
+
+  return linhas.map((f) => {
+    const reserva = f.reserva_id ? porReserva.get(f.reserva_id) : undefined;
+    const saldo = porFolio.get(f.id);
+    const chaleId = f.chale_id ?? reserva?.chale_id ?? null;
+    return {
+      folio_id: f.id,
+      reserva_id: f.reserva_id,
+      hospede_id: f.hospede_id,
+      hospede: f.hospede_id ? nomeHospede.get(f.hospede_id) ?? 'Hóspede' : 'Conta avulsa',
+      chale: chaleId ? nomeChale.get(chaleId) ?? null : null,
+      origem: (reserva?.origem as Origem | undefined) ?? null,
+      check_in: reserva?.check_in ?? null,
+      check_out: reserva?.check_out ?? null,
+      total: num(saldo?.total_conta),
+      pago: num(saldo?.pago),
+      saldo: num(saldo?.saldo),
+    };
+  });
+}
+
+/** Booking tem centro proprio: e o que faz a comissao ser calculada. */
+function slugDaHospedagem(origem: Origem): string {
+  return origem === 'booking' ? 'hospedagem_booking' : 'hospedagem_direta';
+}
+
+/**
+ * Lanca a diaria como item de hospedagem na conta. E este lancamento que
+ * transforma a reserva em faturamento e dispara a comissao do Booking.
+ */
+export async function lancarHospedagem(input: {
+  folio_id: string;
+  origem: Origem;
+  valor_total: number;
+  diarias?: number;
+  data_venda?: string;
+  descricao?: string;
+  custo_unitario?: number | null;
+}): Promise<{ venda: Sale; itens: SaleItem[] }> {
+  const centro = await centroPorSlug(slugDaHospedagem(input.origem));
+  const diarias = input.diarias ?? 1;
+
+  return criarVenda({
+    folio_id: input.folio_id,
+    data_venda: input.data_venda ?? hojeISO(),
+    descricao: 'Hospedagem',
+    itens: [
+      {
+        revenue_center_id: centro.id,
+        descricao: input.descricao ?? (diarias > 1 ? `${diarias} diárias` : 'Diária'),
+        valor_unitario: input.valor_total,
+        custo_unitario: input.custo_unitario ?? null,
+      },
+    ],
+  });
+}
+
+/** Hospede, reserva e conta num passo so, opcionalmente ja com a diaria. */
+export async function criarReservaComConta(input: {
+  nome: string;
+  origem: Origem;
+  check_in: string;
+  check_out: string;
+  telefone?: string | null;
+  email?: string | null;
+  chale_id?: string | null;
+  codigo_externo?: string | null;
+  adultos?: number;
+  criancas?: number;
+  observacoes?: string | null;
+  valor_hospedagem?: number | null;
+}): Promise<{ reserva: Reserva; folio: Folio }> {
+  const hospede = await criarHospede({
+    nome: input.nome,
+    telefone: input.telefone ?? null,
+    email: input.email ?? null,
+  });
+
+  const reserva = await criarReserva({
+    hospede_id: hospede.id,
+    origem: input.origem,
+    check_in: input.check_in,
+    check_out: input.check_out,
+    chale_id: input.chale_id ?? null,
+    codigo_externo: input.codigo_externo ?? null,
+    adultos: input.adultos ?? 2,
+    criancas: input.criancas ?? 0,
+    observacoes: input.observacoes ?? null,
+    status: 'confirmada',
+  });
+
+  const folio = await abrirFolio({
+    reserva_id: reserva.id,
+    hospede_id: hospede.id,
+    chale_id: input.chale_id ?? null,
+  });
+
+  if (input.valor_hospedagem && input.valor_hospedagem > 0) {
+    await lancarHospedagem({
+      folio_id: folio.id,
+      origem: input.origem,
+      valor_total: input.valor_hospedagem,
+      data_venda: input.check_in,
+    });
+  }
+
+  return { reserva, folio };
+}
+
 /** Uma conta por reserva: reaproveita a aberta ou abre na hora. */
 export async function garantirFolio(reserva: {
   id: string;

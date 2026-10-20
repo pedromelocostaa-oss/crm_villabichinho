@@ -9,7 +9,7 @@ import { LeadModal } from './components/LeadModal';
 import { NewLeadModal } from './components/NewLeadModal';
 import { Reports } from './components/Reports';
 import { Login } from './components/Login';
-import { LancamentoRapido } from './components/LancamentoRapido';
+import { Caixa } from './components/Caixa';
 import { CatalogoProdutos } from './components/CatalogoProdutos';
 import { Financeiro } from './components/Financeiro';
 
@@ -128,7 +128,7 @@ export default function App() {
                   Sair
                 </button>
               </div>
-              {page === 'caixa' && <LancamentoRapido />}
+              {page === 'caixa' && <Caixa />}
               {page === 'financeiro' && <Financeiro />}
               {page === 'produtos' && <CatalogoProdutos />}
             </>

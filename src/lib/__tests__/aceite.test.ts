@@ -14,6 +14,7 @@ import {
   criarReserva,
   criarVenda,
   estornarPagamento,
+  fecharFolio,
   hojeISO,
   registrarPagamento,
   round2,
@@ -26,6 +27,7 @@ const AMANHA = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
 const vendasCriadas: string[] = [];
 const pagamentosCriados: string[] = [];
 const reservasCriadas: string[] = [];
+const foliosCriados: string[] = [];
 
 /** Taxa semeada para credito a vista em card_fee_rules. */
 const TAXA_CREDITO_VISTA = 0.032;
@@ -69,6 +71,10 @@ afterAll(async () => {
   if (reservasCriadas.length > 0) {
     await supabase.from('reservas').update({ status: 'cancelada' }).in('id', reservasCriadas);
   }
+  // Conta aberta aparece na lista de contas do caixa.
+  for (const id of foliosCriados) {
+    await fecharFolio(id);
+  }
   await supabase.auth.signOut();
 });
 
@@ -85,6 +91,7 @@ async function montarEstadia(origem: 'direta' | 'booking') {
   });
   reservasCriadas.push(reserva.id);
   const folio = await abrirFolio({ reserva_id: reserva.id, hospede_id: hospede.id });
+  foliosCriados.push(folio.id);
 
   const hospedagem = await criarVenda({
     folio_id: folio.id,
