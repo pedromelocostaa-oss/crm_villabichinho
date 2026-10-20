@@ -1,14 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
-import type { Lead, LeadStage } from '../types/lead';
-import { currencyBRL, formatDate, todayISO } from '../utils/storage';
-import {
-  arquivarLead,
-  atualizarLead,
-  criarLead,
-  importarDoLocalStorage,
-  listarLeads,
-  type ResultadoImportacao,
-} from '../lib/leads';
+import type { Lead, LeadStage, HistoryEntry } from '../types/lead';
+import { getLeads, saveLeads, generateId, todayISO, formatDate, currencyBRL } from '../utils/storage';
+import { MOCK_LEADS } from '../data/mockData';
 
 function buildEditNote(original: Lead, changes: Partial<Lead>): string {
   const diffs: string[] = [];
@@ -49,125 +42,100 @@ function buildEditNote(original: Lead, changes: Partial<Lead>): string {
   return diffs.length > 0 ? `Campos atualizados — ${diffs.join(' · ')}` : 'Lead editado';
 }
 
-const STAGE_NOTES: Record<LeadStage, string> = {
-  novo_contato: 'Etapa alterada para Novo Contato',
-  orcamento_enviado: 'Orçamento enviado ao cliente',
-  negociacao: 'Em negociação com o cliente',
-  pendente_followup: 'Aguardando retorno do cliente',
-  confirmado: 'Reserva confirmada! 🎉',
-  declinado: 'Lead marcado como declinado',
-};
-
-function mensagemDeErro(e: unknown, padrao: string): string {
-  return e instanceof Error ? e.message : padrao;
-}
-
-/**
- * Estado do CRM, agora sobre o Postgres. A interface publica e a mesma de
- * quando isso vivia no localStorage, para nao mexer nas telas.
- */
-export function useLeads(habilitado = true) {
+export function useLeads() {
   const [leads, setLeads] = useState<Lead[]>([]);
-  const [carregando, setCarregando] = useState(habilitado);
-  const [erro, setErro] = useState<string | null>(null);
 
-  // Nenhum setState antes do primeiro await: setState sincrono dentro do
-  // efeito dispara renders em cascata.
   useEffect(() => {
-    if (!habilitado) return;
-    let ativo = true;
-
-    void (async () => {
-      try {
-        const dados = await listarLeads();
-        if (ativo) setLeads(dados);
-      } catch (e) {
-        if (ativo) setErro(mensagemDeErro(e, 'Falha ao carregar os leads'));
-      } finally {
-        if (ativo) setCarregando(false);
-      }
-    })();
-
-    return () => {
-      ativo = false;
-    };
-  }, [habilitado]);
-
-  const recarregar = useCallback(async () => {
-    setCarregando(true);
-    setErro(null);
-    try {
-      setLeads(await listarLeads());
-    } catch (e) {
-      setErro(mensagemDeErro(e, 'Falha ao carregar os leads'));
-    } finally {
-      setCarregando(false);
+    const stored = getLeads();
+    if (stored.length === 0) {
+      saveLeads(MOCK_LEADS);
+      setLeads(MOCK_LEADS);
+    } else {
+      setLeads(stored);
     }
   }, []);
 
-  /** Substitui o lead na lista local, para nao reler o banco inteiro. */
-  const trocar = useCallback((lead: Lead) => {
-    setLeads((atuais) => atuais.map((l) => (l.id === lead.id ? lead : l)));
+  const persist = useCallback((updated: Lead[]) => {
+    setLeads(updated);
+    saveLeads(updated);
   }, []);
 
   const createLead = useCallback(
-    async (data: Omit<Lead, 'id' | 'createdAt' | 'history'>) => {
+    (data: Omit<Lead, 'id' | 'createdAt' | 'history'>) => {
       const fields: string[] = [];
       if (data.checkIn) fields.push(`check-in ${formatDate(data.checkIn)}`);
       if (data.guests) fields.push(`${data.guests} hóspede${data.guests > 1 ? 's' : ''}`);
       if (data.occasion) fields.push(data.occasion);
       const detailNote = fields.length > 0 ? ` · ${fields.join(', ')}` : '';
 
-      try {
-        const novo = await criarLead(data, `Lead criado${detailNote}`);
-        setLeads((atuais) => [novo, ...atuais]);
-        setErro(null);
-        return novo;
-      } catch (e) {
-        setErro(mensagemDeErro(e, 'Falha ao criar o lead'));
-        return null;
-      }
+      const newLead: Lead = {
+        ...data,
+        id: generateId(),
+        createdAt: new Date().toISOString(),
+        stage: 'novo_contato',
+        services: data.services || [],
+        history: [
+          {
+            id: generateId(),
+            date: new Date().toISOString(),
+            action: `Lead criado${detailNote}`,
+            attendant: data.attendant || 'Sistema',
+          },
+        ],
+      };
+      persist([newLead, ...leads]);
+      return newLead;
     },
-    []
+    [leads, persist]
   );
 
   const updateLead = useCallback(
-    async (id: string, changes: Partial<Lead>, historyNote?: string, attendant?: string) => {
-      const original = leads.find((l) => l.id === id);
-      const nota = historyNote ?? (original ? buildEditNote(original, changes) : 'Lead editado');
-      try {
-        trocar(await atualizarLead(id, changes, nota, attendant));
-        setErro(null);
-      } catch (e) {
-        setErro(mensagemDeErro(e, 'Falha ao atualizar o lead'));
-      }
+    (id: string, changes: Partial<Lead>, historyNote?: string, attendant?: string) => {
+      const updated = leads.map((l) => {
+        if (l.id !== id) return l;
+        const note = historyNote ?? buildEditNote(l, changes);
+        const newHistory: HistoryEntry[] = [
+          ...l.history,
+          {
+            id: generateId(),
+            date: new Date().toISOString(),
+            action: note,
+            attendant: attendant || changes.attendant || l.attendant || 'Sistema',
+          },
+        ];
+        return { ...l, ...changes, lastInteraction: new Date().toISOString(), history: newHistory };
+      });
+      persist(updated);
     },
-    [leads, trocar]
+    [leads, persist]
   );
 
   const changeStage = useCallback(
-    (id: string, stage: LeadStage, attendant: string, note?: string) =>
-      updateLead(id, { stage }, note || STAGE_NOTES[stage], attendant),
+    (id: string, stage: LeadStage, attendant: string, note?: string) => {
+      const label: Record<LeadStage, string> = {
+        novo_contato: 'Etapa alterada para Novo Contato',
+        orcamento_enviado: 'Orçamento enviado ao cliente',
+        negociacao: 'Em negociação com o cliente',
+        pendente_followup: 'Aguardando retorno do cliente',
+        confirmado: 'Reserva confirmada! 🎉',
+        declinado: 'Lead marcado como declinado',
+      };
+      updateLead(id, { stage }, note || label[stage], attendant);
+    },
     [updateLead]
   );
 
-  /**
-   * Arquiva em vez de apagar: reservas.lead_id aponta para o lead e a RLS nao
-   * tem politica de DELETE. A listagem filtra arquivado = false.
-   */
-  const deleteLead = useCallback(async (id: string, attendant?: string) => {
-    try {
-      await arquivarLead(id, attendant);
-      setLeads((atuais) => atuais.filter((l) => l.id !== id));
-      setErro(null);
-    } catch (e) {
-      setErro(mensagemDeErro(e, 'Falha ao arquivar o lead'));
-    }
-  }, []);
+  const deleteLead = useCallback(
+    (id: string) => {
+      persist(leads.filter((l) => l.id !== id));
+    },
+    [leads, persist]
+  );
 
   const markFollowupDone = useCallback(
-    (id: string, attendant: string) =>
-      updateLead(id, { followupDone: true }, 'Follow-up realizado ✓', attendant),
+    (id: string, attendant: string) => {
+      updateLead(id, { followupDone: true }, 'Follow-up realizado ✓', attendant);
+    },
     [updateLead]
   );
 
@@ -183,19 +151,8 @@ export function useLeads(habilitado = true) {
     );
   }, [leads]);
 
-  /** Importacao one-shot do localStorage deste navegador. */
-  const importar = useCallback(async (): Promise<ResultadoImportacao> => {
-    const resultado = await importarDoLocalStorage();
-    if (resultado.importados > 0) await recarregar();
-    return resultado;
-  }, [recarregar]);
-
   return {
     leads,
-    carregando,
-    erro,
-    recarregar,
-    importar,
     createLead,
     updateLead,
     changeStage,
